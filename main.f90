@@ -24,6 +24,9 @@ program world_sim
       integer(c_int) :: vk_should_close
     end function vk_should_close
 
+    subroutine vk_draw_frame() bind(C, name="vk_draw_frame")
+    end subroutine vk_draw_frame
+
     subroutine vk_cleanup() bind(C, name="vk_cleanup")
     end subroutine vk_cleanup
   end interface
@@ -35,7 +38,7 @@ program world_sim
 
   ! Main simulation loop
   do while (vk_should_close() == 0)
-
+    call vk_draw_frame()
   end do
 
   call vk_cleanup()
