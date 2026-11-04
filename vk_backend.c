@@ -38,6 +38,20 @@ typedef struct {
     VkSemaphore image_available_sem;
     VkSemaphore* render_finished_sems;
     VkFence in_flight_fence;
+
+    // Shared Heightmap SSBO
+    uint32_t grid_w;
+    uint32_t grid_h;
+    VkBuffer ssbo_buffer;
+    VkDeviceMemory ssbo_memory;
+    void* ssbo_mapped_ptr;
+
+    // Descriptoers & graphics pipeline
+    VkDescriptorSetLayout desc_set_layout;
+    VkDescriptorPool desc_pool;
+    VkDescriptorSet desc_set;
+    VkPipelineLayout pipeline_layout;
+    VkPipeline graphics_pipeline;
 } VulkanContext;
 
 static VulkanContext ctx = {0};
@@ -242,6 +256,244 @@ static int create_commands_and_sync(void) {
     return 0;
 }
 
+static uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties mem_props;
+    vkGetPhysicalDeviceMemoryProperties(ctx.physical_device, &mem_props);
+
+    for (uint32_t i=0; i<mem_props.memoryTypeCount; i++) {
+        if ((type_filter & (1 << i))
+         && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    fprintf(stderr, "Failed to find suitable memory type!\n");
+    exit(1);
+}
+
+static VkShaderModule load_shader_module(const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "Failed to open shader file:%s\n", path);
+        exit(1);
+    }
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    rewind(file);
+
+    uint32_t* code = malloc(size);
+    if (fread(code, 1, size, file) != (size_t)size) {
+        fprintf(stderr, "Failed to read shader file:%s\n", path);
+        exit(1);
+    }
+    fclose(file);
+
+    VkShaderModuleCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = (size_t)size,
+        .pCode = code
+    };
+
+    VkShaderModule module;
+    if (vkCreateShaderModule(ctx.device, &info, NULL, &module) != VK_SUCCESS) {
+        fprintf(stderr, "Failed to create shader module:%s\n", path);
+        exit(1);
+    }
+    free(code);
+    return module;
+}
+
+static int create_descriptors_and_pipeline(void) {
+    // Descriptor set layout (binding 0 = SSBO visible to fragment shader)
+    VkDescriptorSetLayoutBinding binding = {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+    };
+    VkDescriptorSetLayoutCreateInfo layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &binding
+    };
+    if (vkCreateDescriptorSetLayout(ctx.device, &layout_info, NULL, &ctx.desc_set_layout) != VK_SUCCESS) return -1;
+
+    // Descriptor pool & descriptor set allocation
+    VkDescriptorPoolSize pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1
+    };
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_size
+    };
+    if (vkCreateDescriptorPool(ctx.device, &pool_info, NULL, &ctx.desc_pool) != VK_SUCCESS) return -1;
+
+    VkDescriptorSetAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = ctx.desc_pool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &ctx.desc_set_layout
+    };
+    if (vkAllocateDescriptorSets(ctx.device, &alloc_info, &ctx.desc_set) != VK_SUCCESS) return -1;
+
+    // Pipeline layout (descriptor set + 8-byte push constants for grid_w, grid_h)
+    VkPushConstantRange push_range = {
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .offset = 0,
+        .size = sizeof(uint32_t)*2
+    };
+    VkPipelineLayoutCreateInfo pipe_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &ctx.desc_set_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push_range
+    };
+    if (vkCreatePipelineLayout(ctx.device, &pipe_layout_info, NULL, &ctx.pipeline_layout) != VK_SUCCESS) return -1;
+
+    // Load SPIR-V shaders
+    VkShaderModule vert_mod = load_shader_module("build/map.vert.spv");
+    VkShaderModule frag_mod = load_shader_module("build/map.frag.spv");
+
+    VkPipelineShaderStageCreateInfo stages[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vert_mod,
+            .pName = "main"
+        }, {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = frag_mod,
+            .pName = "main"
+        }
+    };
+
+    // Fixed-function state (empty vertex input, fullscreen triangle topology)
+    VkPipelineVertexInputStateCreateInfo vertex_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
+    };
+    VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    };
+    VkPipelineViewportStateCreateInfo viewport_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount = 1
+    };
+    VkPipelineRasterizationStateCreateInfo rasterizer = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0f
+    };
+    VkPipelineMultisampleStateCreateInfo multisampling = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
+    };
+    VkPipelineColorBlendAttachmentState blend_attachment = {
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | 
+                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        .blendEnable = VK_FALSE
+    };
+    VkPipelineColorBlendStateCreateInfo color_blending = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &blend_attachment
+    };
+
+    VkDynamicState dyn_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamic_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 2,
+        .pDynamicStates = dyn_states
+    };
+
+    // Vulkan 1.3 dynamic rendering format link
+    VkPipelineRenderingCreateInfo rendering_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1,
+        .pColorAttachmentFormats = &ctx.swapchain_format
+    };
+    VkGraphicsPipelineCreateInfo pipe_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &rendering_info,
+        .stageCount = 2,
+        .pStages = stages,
+        .pVertexInputState = &vertex_input,
+        .pInputAssemblyState = &input_assembly,
+        .pViewportState = &viewport_state,
+        .pRasterizationState = &rasterizer,
+        .pMultisampleState = &multisampling,
+        .pColorBlendState = &color_blending,
+        .pDynamicState = &dynamic_state,
+        .layout = ctx.pipeline_layout
+    };
+
+    if (vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pipe_info, NULL, &ctx.graphics_pipeline) != VK_SUCCESS) return -1;
+
+    // Shader modules are no longer needed once compiled into the pipeline
+    vkDestroyShaderModule(ctx.device, vert_mod, NULL);
+    vkDestroyShaderModule(ctx.device, frag_mod, NULL);
+    return 0;
+}
+
+// Called from Fortran - allocates the shared buffer and returns the raw pointer
+void* vk_allocate_heightmap(int grid_w, int grid_h) {
+    ctx.grid_w = (uint32_t)grid_w;
+    ctx.grid_h = (uint32_t)grid_h;
+    VkDeviceSize buffer_size = sizeof(float) * ctx.grid_w * ctx.grid_h;
+
+    VkBufferCreateInfo buf_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = buffer_size,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE
+    };
+
+    if (vkCreateBuffer(ctx.device, &buf_info, NULL, &ctx.ssbo_buffer) != VK_SUCCESS) return NULL;
+
+    VkMemoryRequirements mem_reqs;
+    vkGetBufferMemoryRequirements(ctx.device, ctx.ssbo_buffer, &mem_reqs);
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mem_reqs.size,
+        .memoryTypeIndex = find_memory_type(
+            mem_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        )
+    };
+
+    if (vkAllocateMemory(ctx.device, &alloc_info, NULL, &ctx.ssbo_memory) != VK_SUCCESS) return NULL;
+    vkBindBufferMemory(ctx.device, ctx.ssbo_buffer, ctx.ssbo_memory, 0);
+
+    // Map persistently for the lifetime of the program
+    vkMapMemory(ctx.device, ctx.ssbo_memory, 0, buffer_size, 0, &ctx.ssbo_mapped_ptr);
+
+    // Bind this buffer to Set 0, Binding 0 in our Descriptor Set
+    VkDescriptorBufferInfo desc_buf_info = {
+        .buffer = ctx.ssbo_buffer,
+        .offset = 0,
+        .range = buffer_size
+    };
+    VkWriteDescriptorSet write_desc = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = ctx.desc_set,
+        .dstBinding = 0,
+        .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pBufferInfo = &desc_buf_info
+    };
+    vkUpdateDescriptorSets(ctx.device, 1, &write_desc, 0, NULL);
+
+    return ctx.ssbo_mapped_ptr;
+}
 
 int vk_init(int width, int height, const char* title) {
     if (!glfwInit()) {
@@ -301,6 +553,7 @@ int vk_init(int width, int height, const char* title) {
     if (create_logical_device() != 0) return -1;
     if (create_swapchain(width, height) != 0) return -1;
     if (create_commands_and_sync() != 0) return -1;
+    if (create_descriptors_and_pipeline() != 0) return -1;
 
     printf("Swapchain and command pipeline ready (%u images)\n", ctx.image_count);
     return 0;
@@ -358,7 +611,32 @@ void vk_draw_frame(void) {
     };
 
     vkCmdBeginRendering(ctx.cmd_buf, &render_info);
-    // Mesh draw calls go here...
+
+    if (ctx.ssbo_buffer != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(ctx.cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.graphics_pipeline);
+        
+        VkViewport viewport = {
+            .x = 0.0f, .y = 0.0f,
+            .width = (float)ctx.swapchain_extent.width,
+            .height = (float)ctx.swapchain_extent.height,
+            .minDepth = 0.0f, .maxDepth = 1.0f
+        };
+        vkCmdSetViewport(ctx.cmd_buf, 0, 1, &viewport);
+
+        VkRect2D scissor = { .offset = {0,0}, .extent = ctx.swapchain_extent };
+        vkCmdSetScissor(ctx.cmd_buf, 0, 1, &scissor);
+
+        vkCmdBindDescriptorSets(ctx.cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                ctx.pipeline_layout, 0, 1, &ctx.desc_set, 0, NULL);
+
+        uint32_t push_constants[2] = { ctx.grid_w, ctx.grid_h };
+        vkCmdPushConstants(ctx.cmd_buf, ctx.pipeline_layout,
+                VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constants), push_constants);
+
+        // Draw our 3-vertex procedural fullscreen triangle
+        vkCmdDraw(ctx.cmd_buf, 3, 1, 0, 0);
+    }
+
     vkCmdEndRendering(ctx.cmd_buf);
 
     // Transition swapchain image: COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR
@@ -416,6 +694,18 @@ int vk_should_close(void) {
 
 void vk_cleanup(void) {
     vkDeviceWaitIdle(ctx.device);
+
+    // Deallocate the shared buffer
+    if (ctx.ssbo_buffer != VK_NULL_HANDLE) {
+        vkUnmapMemory(ctx.device, ctx.ssbo_memory);
+        vkDestroyBuffer(ctx.device, ctx.ssbo_buffer, NULL);
+        vkFreeMemory(ctx.device, ctx.ssbo_memory, NULL);
+    }
+
+    vkDestroyPipeline(ctx.device, ctx.graphics_pipeline, NULL);
+    vkDestroyPipelineLayout(ctx.device, ctx.pipeline_layout, NULL);
+    vkDestroyDescriptorPool(ctx.device, ctx.desc_pool, NULL);
+    vkDestroyDescriptorSetLayout(ctx.device, ctx.desc_set_layout, NULL);
 
     vkDestroySemaphore(ctx.device, ctx.image_available_sem, NULL);
     vkDestroyFence(ctx.device, ctx.in_flight_fence, NULL);

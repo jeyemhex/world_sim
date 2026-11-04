@@ -27,7 +27,7 @@ OBJS    := $(patsubst %.c, $(BUILD)/%.o, $(C_SRCS)) \
 
 # Default Target
 .PHONY: all run clean
-all: $(TARGET) $(SPV)
+all: $(SPV) $(TARGET)
 
 # Link the executable (using gfortran so libgfortran is linked automatically)
 $(TARGET): $(OBJS)
