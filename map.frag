@@ -32,18 +32,18 @@ void main() {
   
   // Basic hyposometric tinting based on height h in [0.0, 1.0]
   vec3 color;
-  if (h < 0.35) {
+  if (h < 0.5) {
     // Deep to shallow water
-    color = mix(vec3(0.05, 0.15, 0.40), vec3(0.15, 0.40, 0.70), h/0.35);
-  } else if (h < 0.40) {
+    color = mix(vec3(0.05, 0.15, 0.40), vec3(0.15, 0.40, 0.70), h/0.5);
+  } else if (h < 0.55) {
     // Sand/beach
-    color = mix(vec3(0.76, 0.70, 0.50), vec3(0.25, 0.55, 0.20), (h-0.35)/0.05);
-  } else if (h < 0.75) {
+    color = mix(vec3(0.76, 0.70, 0.50), vec3(0.25, 0.55, 0.20), (h-0.5)/0.05);
+  } else if (h < 0.85) {
     // iLowland forest to upland
-    color = mix(vec3(0.25, 0.55, 0.20), vec3(0.45, 0.40, 0.30), (h-0.40)/0.35);
+    color = mix(vec3(0.25, 0.55, 0.20), vec3(0.45, 0.40, 0.30), (h-0.55)/0.30);
   } else {
     // Bare rock to snow peaks
-    color = mix(vec3(0.45, 0.40, 0.30), vec3(0.95, 0.95, 0.98), (h-0.75)/0.25);
+    color = mix(vec3(0.45, 0.40, 0.30), vec3(0.95, 0.95, 0.98), (h-0.85)/0.15);
   }
 
   out_color = vec4(color, 1.0);

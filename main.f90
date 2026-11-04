@@ -37,11 +37,13 @@ program world_sim
     end subroutine vk_cleanup
   end interface
 
-  integer(c_int), parameter :: GRID_W = 512, GRID_H = 512
+  integer(c_int), parameter :: GRID_W = 128, GRID_H = 72
   integer(c_int) :: status, ix, iy
   type(c_ptr) :: raw_gpu_ptr
+  real(c_float) :: max_val, min_val
   real(c_float), pointer :: heightmap(:,:)
-  real(c_float) :: dx, dy, dist
+
+  integer :: iter
 
   status = vk_init(1280, 720, "Fortran Vulkan World" // c_null_char)
   if (status /= 0) error stop "Failed to initialized Vulkan backend"
@@ -52,13 +54,31 @@ program world_sim
   call c_f_pointer(raw_gpu_ptr, heightmap, [GRID_W, GRID_H])
 
   ! Populate the heightmap directly in Fortran (values in [0.0, 1.0])
-  do iy=1, GRID_H
-    do ix=1, GRID_W
-      dx = real(ix - GRID_W/2., c_float) / real(GRID_W/2., c_float)
-      dy = real(iy - GRID_H/2., c_float) / real(GRID_H/2., c_float)
-      dist = sqrt(dx*dx + dy*dy)
-      heightmap(ix, iy) = 0.5_c_float + 0.45_c_float * cos(dist * 10.0_c_float)*exp(-dist * 1.5_c_float)
+  call random_number(heightmap)
+  print *, max_val, min_val
+
+  do iter=1, 25
+    !$omp parallel do default(none) shared(heightmap) private(ix)
+    do iy=2, GRID_H-1
+      do ix=2+mod(iy,2), GRID_W-1, 2
+        heightmap(ix, iy) = (2*heightmap(ix,iy) + 0.5*(heightmap(ix-1,iy) + heightmap(ix,iy-1) + heightmap(ix+1,iy) + heightmap(ix,iy+1)))/4
+      end do
     end do
+    !$omp parallel do default(none) shared(heightmap) private(ix)
+    do iy=2, GRID_H-1
+      do ix=2+mod(iy+1,2), GRID_W-1, 2
+        heightmap(ix, iy) = (2*heightmap(ix,iy) + 0.5*(heightmap(ix-1,iy) + heightmap(ix,iy-1) + heightmap(ix+1,iy) + heightmap(ix,iy+1)))/4
+      end do
+    end do
+
+    heightmap(:,1) = heightmap(:,GRID_H-1)
+    heightmap(:,GRID_H) = heightmap(:,2)
+    heightmap(1,:) = heightmap(GRID_W-1,:)
+    heightmap(GRID_W,:) = heightmap(2,:)
+    min_val = minval(heightmap)
+    max_val = maxval(heightmap)
+    heightmap = (heightmap - min_val) / (max_val - min_val)
+    print *, "Finished iter ", iter, ", range = ", maxval(heightmap), minval(heightmap)
   end do
 
   ! Main simulation loop
@@ -68,4 +88,8 @@ program world_sim
 
   call vk_cleanup()
 
+contains
+  real function rand()
+    call random_number(rand)
+  end function rand
 end program world_sim

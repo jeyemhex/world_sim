@@ -8,9 +8,9 @@ TARGET  := sim
 BUILD   := build
 
 # Compiler and Linker Flags
-FFLAGS  := -O2 -Wall -Wextra -g -J$(BUILD)
+FFLAGS  := -O2 -Wall -Wextra -fcheck=all -fopenmp -g -J$(BUILD)
 CFLAGS  := -O2 -Wall -Wextra -g -std=c11
-LDFLAGS := -lvulkan -lglfw -lm
+LDFLAGS := -lvulkan -lglfw -lm -fopenmp
 
 # Source Files
 # Note: List Fortran files in dependency order (modules first, main.f90 last)
