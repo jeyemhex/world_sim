@@ -29,8 +29,8 @@ module camera_mod
     real(c_float) :: pos(3) = [0.0_c_float, 0.0_c_float, 25.0_c_float]
     real(c_float) :: yaw    = 0.785_c_float
     real(c_float) :: pitch  = -0.45_c_float
-    real(c_float) :: speed  = 30.0_c_float
-    real(c_float) :: turn_speed = 1.8_c_float
+    real(c_float) :: speed  = 10.0_c_float
+    real(c_float) :: turn_speed = 1.0_c_float
   end type camera_t
 
   interface
@@ -55,8 +55,8 @@ contains
     if (vk_is_key_down(KEY_UP)    /= 0) cam%pitch = cam%pitch + cam%turn_speed*dt
     if (vk_is_key_down(KEY_DOWN)  /= 0) cam%pitch = cam%pitch - cam%turn_speed*dt
 
-    fwd = [cos(cam%yaw), sin(cam%yaw)]
-    right = [sin(cam%yaw), -cos(cam%yaw)]
+    fwd = [cos(cam%yaw), sin(cam%yaw)] * cam%speed
+    right = [sin(cam%yaw), -cos(cam%yaw)] * cam%speed
 
     ! Translation (WASD + space + l-shift)
     if (vk_is_key_down(KEY_W)  /= 0) cam%pos(1:2) = cam%pos(1:2) + fwd*dt
@@ -78,7 +78,7 @@ contains
 
     ! Forward vector from spehrical pitch/yaw (Z is up)
     f = [ cos(cam%pitch)*cos(cam%yaw), &
-          sin(cam%pitch)*sin(cam%yaw), &
+          cos(cam%pitch)*sin(cam%yaw), &
           sin(cam%pitch)]
 
     world_up = [0.0_c_float, 0.0_c_float, 1.0_c_float]

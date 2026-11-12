@@ -42,7 +42,7 @@ program world_sim
     end subroutine vk_cleanup
   end interface
 
-  integer(c_int), parameter :: GRID_W = 1280, GRID_H = 720
+  integer(c_int), parameter :: GRID_W = 512, GRID_H = 512
   integer(c_int) :: status, ix, iy
   type(c_ptr) :: raw_gpu_ptr
   real(c_float) :: max_val, min_val
@@ -51,8 +51,8 @@ program world_sim
   integer :: iter
 
   ! Camera controls
-  integer(c_int), parameter :: VIEW_RADIUS = 96_c_int
-  real(c_float),  parameter :: Z_SCALE     = 25.0_c_float
+  integer(c_int), parameter :: VIEW_RADIUS = 256_c_int
+  real(c_float),  parameter :: Z_SCALE     = 10.0_c_float
   type(camera_t) :: cam
   real(c_float)  :: mvp(4,4), cam_pos_packed(4)
 
@@ -68,7 +68,7 @@ program world_sim
   call random_number(heightmap)
   print *, max_val, min_val
 
-  do iter=1, 25
+  do iter=1, 10
     !$omp parallel do default(none) shared(heightmap) private(ix)
     do iy=2, GRID_H-1
       do ix=2+mod(iy,2), GRID_W-1, 2
@@ -92,11 +92,16 @@ program world_sim
     print *, "Finished iter ", iter, ", range = ", maxval(heightmap), minval(heightmap)
   end do
 
+  cam%pos = [real(GRID_W/2, c_float), real(GRID_H/2, c_float), 18.0_c_float]
+
   ! Main simulation loop
   do while (vk_should_close() == 0)
     !Update the camera
     call camera_update(cam, 0.0166_c_float)
     call camera_get_mvp(cam, 1280.0_c_float / 720.0_c_float, mvp)
+
+    cam_pos_packed(1:3) = cam%pos
+    cam_pos_packed(4)   = Z_SCALE
     call vk_draw_frame(mvp, cam_pos_packed, VIEW_RADIUS)
   end do
 

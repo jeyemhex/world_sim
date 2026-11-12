@@ -66,7 +66,7 @@ void main() {
   float hU = max(sample_h(v_cell.x, v_cell.y+1), 0.35) * z_scale;
   frag_normal = normalize(vec3(hL-hR, hD-hU, 2.0));
 
-  vec3 world_pos = vec3(float(v_cell.x), float(v_cell.x), h_geom * z_scale); 
+  vec3 world_pos = vec3(float(v_cell.x), float(v_cell.y), h_geom * z_scale); 
   frag_dist = length(world_pos.xy - pc.cam_pos.xy);
 
   gl_Position = pc.mvp * vec4(world_pos, 1.0);

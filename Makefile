@@ -25,6 +25,8 @@ SPV     := $(patsubst %, $(BUILD)/%.spv, $(SHADERS))
 OBJS    := $(patsubst %.c, $(BUILD)/%.o, $(C_SRCS)) \
            $(patsubst %.f90, $(BUILD)/%.o, $(F_SRCS))
 
+OMP_THREADS := 8
+
 # Default Target
 .PHONY: all run clean
 all: $(SPV) $(TARGET)
@@ -51,8 +53,8 @@ $(BUILD):
 
 # Convenience target to build and run
 run: all
-	./$(TARGET)
+	OMP_NUM_THREADS=$(OMP_THREADS) ./$(TARGET)
 
 # Clean build artifacts
 clean:
-	rm -rf $(BUILD) $(TARGET)
+	rm -rf $(BUILD) $(TARGET) *.mod

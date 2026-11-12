@@ -277,7 +277,7 @@ static int create_depth_resources(int width, int height) {
     vkBindImageMemory(ctx.device, ctx.depth_image, ctx.depth_memory, 0);
 
     VkImageViewCreateInfo view_info = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = ctx.depth_image,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format = VK_FORMAT_D32_SFLOAT,
@@ -735,9 +735,9 @@ void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius) {
             &pc
         );
         uint32_t side = (uint32_t)(2*view_radius);
-        uint32_t vertex_count = side * side * 16;
+        uint32_t vertex_count = side * side * 6;
         // Draw our 3-vertex procedural fullscreen triangle
-        vkCmdDraw(ctx.cmd_buf, 3, vertex_count, 0, 0);
+        vkCmdDraw(ctx.cmd_buf, vertex_count, 1, 0, 0);
     }
 
     vkCmdEndRendering(ctx.cmd_buf);
@@ -816,7 +816,6 @@ void vk_cleanup(void) {
 
     for (uint32_t i=0; i<ctx.image_count; i++) {
         vkDestroyImageView(ctx.device, ctx.image_views[i], NULL);
-        vkDestroyImage(ctx.device, ctx.images[i], NULL);
         vkDestroySemaphore(ctx.device, ctx.render_finished_sems[i], NULL);
     }
 
