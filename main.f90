@@ -9,6 +9,7 @@ program world_sim
 ! This code is distributed under the GLWTPL license.
 !==============================================================================#
   use, intrinsic :: iso_c_binding
+  use :: camera_mod
   implicit none
 
   interface
@@ -30,20 +31,30 @@ program world_sim
       integer(c_int) :: vk_should_close
     end function vk_should_close
 
-    subroutine vk_draw_frame() bind(C, name="vk_draw_frame")
+    subroutine vk_draw_frame(mvp, cam_pos, view_radius) bind(C, name="vk_draw_frame")
+      import :: c_float, c_int
+      real(c_float), dimension(*), intent(in) :: mvp
+      real(c_float), dimension(*), intent(in) :: cam_pos
+      integer(c_int), value :: view_radius
     end subroutine vk_draw_frame
 
     subroutine vk_cleanup() bind(C, name="vk_cleanup")
     end subroutine vk_cleanup
   end interface
 
-  integer(c_int), parameter :: GRID_W = 128, GRID_H = 72
+  integer(c_int), parameter :: GRID_W = 1280, GRID_H = 720
   integer(c_int) :: status, ix, iy
   type(c_ptr) :: raw_gpu_ptr
   real(c_float) :: max_val, min_val
   real(c_float), pointer :: heightmap(:,:)
 
   integer :: iter
+
+  ! Camera controls
+  integer(c_int), parameter :: VIEW_RADIUS = 96_c_int
+  real(c_float),  parameter :: Z_SCALE     = 25.0_c_float
+  type(camera_t) :: cam
+  real(c_float)  :: mvp(4,4), cam_pos_packed(4)
 
   status = vk_init(1280, 720, "Fortran Vulkan World" // c_null_char)
   if (status /= 0) error stop "Failed to initialized Vulkan backend"
@@ -83,7 +94,10 @@ program world_sim
 
   ! Main simulation loop
   do while (vk_should_close() == 0)
-    call vk_draw_frame()
+    !Update the camera
+    call camera_update(cam, 0.0166_c_float)
+    call camera_get_mvp(cam, 1280.0_c_float / 720.0_c_float, mvp)
+    call vk_draw_frame(mvp, cam_pos_packed, VIEW_RADIUS)
   end do
 
   call vk_cleanup()

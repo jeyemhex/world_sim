@@ -16,6 +16,12 @@
 #include <stdbool.h>
 
 typedef struct {
+    float mvp[16];
+    float camp_pos[4];
+    int32_t grid_info[4];
+} PushConstants;
+
+typedef struct {
     GLFWwindow* window;
     VkInstance instance;
     VkSurfaceKHR surface;
@@ -52,6 +58,11 @@ typedef struct {
     VkDescriptorSet desc_set;
     VkPipelineLayout pipeline_layout;
     VkPipeline graphics_pipeline;
+
+    // Depth buffer
+    VkImage depth_image;
+    VkDeviceMemory depth_memory;
+    VkImageView depth_view;
 } VulkanContext;
 
 static VulkanContext ctx = {0};
@@ -221,6 +232,65 @@ static int create_swapchain(int width, int height) {
     return 0;
 }
 
+static uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties mem_props;
+    vkGetPhysicalDeviceMemoryProperties(ctx.physical_device, &mem_props);
+
+    for (uint32_t i=0; i<mem_props.memoryTypeCount; i++) {
+        if ((type_filter & (1 << i))
+         && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    fprintf(stderr, "Failed to find suitable memory type!\n");
+    exit(1);
+}
+
+static int create_depth_resources(int width, int height) {
+    VkImageCreateInfo img_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_D32_SFLOAT,
+        .extent = { (uint32_t)width, (uint32_t)height, 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED
+    };
+
+    if (vkCreateImage(ctx.device, &img_info, NULL, &ctx.depth_image) != VK_SUCCESS) return -1;
+
+    VkMemoryRequirements mem_reqs;
+    vkGetImageMemoryRequirements(ctx.device, ctx.depth_image, &mem_reqs);
+
+
+    VkMemoryAllocateInfo alloc_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mem_reqs.size,
+        .memoryTypeIndex = find_memory_type(mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+    };
+    if (vkAllocateMemory(ctx.device, &alloc_info, NULL, &ctx.depth_memory) != VK_SUCCESS) return -1;
+    vkBindImageMemory(ctx.device, ctx.depth_image, ctx.depth_memory, 0);
+
+    VkImageViewCreateInfo view_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .image = ctx.depth_image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_D32_SFLOAT,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .baseMipLevel = 0, .levelCount = 1,
+            .baseArrayLayer = 0, .layerCount = 1
+        }
+    };
+    if (vkCreateImageView(ctx.device, &view_info, NULL, &ctx.depth_view) != VK_SUCCESS) return -1;
+    return 0;
+}
+
 static int create_commands_and_sync(void) {
     VkCommandPoolCreateInfo pool_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -254,21 +324,6 @@ static int create_commands_and_sync(void) {
     }
 
     return 0;
-}
-
-static uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties) {
-    VkPhysicalDeviceMemoryProperties mem_props;
-    vkGetPhysicalDeviceMemoryProperties(ctx.physical_device, &mem_props);
-
-    for (uint32_t i=0; i<mem_props.memoryTypeCount; i++) {
-        if ((type_filter & (1 << i))
-         && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
-
-    fprintf(stderr, "Failed to find suitable memory type!\n");
-    exit(1);
 }
 
 static VkShaderModule load_shader_module(const char* path) {
@@ -309,7 +364,7 @@ static int create_descriptors_and_pipeline(void) {
         .binding = 0,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
     };
     VkDescriptorSetLayoutCreateInfo layout_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -341,9 +396,9 @@ static int create_descriptors_and_pipeline(void) {
 
     // Pipeline layout (descriptor set + 8-byte push constants for grid_w, grid_h)
     VkPushConstantRange push_range = {
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         .offset = 0,
-        .size = sizeof(uint32_t)*2
+        .size = sizeof(PushConstants)
     };
     VkPipelineLayoutCreateInfo pipe_layout_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -414,11 +469,21 @@ static int create_descriptors_and_pipeline(void) {
         .pDynamicStates = dyn_states
     };
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = VK_COMPARE_OP_LESS
+    };
+
+    VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+
     // Vulkan 1.3 dynamic rendering format link
     VkPipelineRenderingCreateInfo rendering_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
         .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &ctx.swapchain_format
+        .pColorAttachmentFormats = &ctx.swapchain_format,
+        .depthAttachmentFormat = depth_format
     };
     VkGraphicsPipelineCreateInfo pipe_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -432,7 +497,8 @@ static int create_descriptors_and_pipeline(void) {
         .pMultisampleState = &multisampling,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_state,
-        .layout = ctx.pipeline_layout
+        .layout = ctx.pipeline_layout,
+        .pDepthStencilState = &depth_stencil
     };
 
     if (vkCreateGraphicsPipelines(ctx.device, VK_NULL_HANDLE, 1, &pipe_info, NULL, &ctx.graphics_pipeline) != VK_SUCCESS) return -1;
@@ -554,13 +620,18 @@ int vk_init(int width, int height, const char* title) {
     if (create_swapchain(width, height) != 0) return -1;
     if (create_commands_and_sync() != 0) return -1;
     if (create_descriptors_and_pipeline() != 0) return -1;
+    if (create_depth_resources(width, height) != 0) return -1;
 
     printf("Swapchain and command pipeline ready (%u images)\n", ctx.image_count);
     return 0;
 }
 
-void vk_draw_frame(void) {
-    // Wait for teh previous frame to finish on the GPU
+int vk_is_key_down(int key) {
+    return glfwGetKey(ctx.window, key) == GLFW_PRESS ? 1 : 0;
+}
+
+void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius) {
+    // Wait for the previous frame to finish on the GPU
     vkWaitForFences(ctx.device, 1, &ctx.in_flight_fence, VK_TRUE, UINT64_MAX);
     vkResetFences(ctx.device, 1, &ctx.in_flight_fence);
 
@@ -574,7 +645,7 @@ void vk_draw_frame(void) {
     vkBeginCommandBuffer(ctx.cmd_buf, &begin_info);
 
     // Transition swapchain image: UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL
-    VkImageMemoryBarrier2 barrier_to_color = {
+    VkImageMemoryBarrier2 barriers_in[2] = {{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
         .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
         .srcAccessMask = 0,
@@ -584,13 +655,22 @@ void vk_draw_frame(void) {
         .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .image = ctx.images[img_idx],
         .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-    };
-    VkDependencyInfo dep_to_color = {
+    }, {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .image = ctx.depth_image,
+        .subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1}
+    }};
+    VkDependencyInfo dep_in = {
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 1,
-        .pImageMemoryBarriers = &barrier_to_color
+        .imageMemoryBarrierCount = 2,
+        .pImageMemoryBarriers = barriers_in
     };
-    vkCmdPipelineBarrier2(ctx.cmd_buf, &dep_to_color);
+    vkCmdPipelineBarrier2(ctx.cmd_buf, &dep_in);
 
     // Begin dynamic rendering (clear screen to light blue)
     VkClearValue clear_color = { .color = {{ 0.15f, 0.35f, 0.65f, 1.0f }} };
@@ -602,16 +682,26 @@ void vk_draw_frame(void) {
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
         .clearValue = clear_color
     };
+    VkClearValue clear_depth = { .depthStencil = {1.0f, 0} };
+    VkRenderingAttachmentInfo depth_atatchment = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = ctx.depth_view,
+        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .clearValue = clear_depth
+    };
+
     VkRenderingInfo render_info = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
         .renderArea = { {0,0}, ctx.swapchain_extent },
         .layerCount = 1,
         .colorAttachmentCount = 1,
-        .pColorAttachments = &color_attachment
+        .pColorAttachments = &color_attachment,
+        .pDepthAttachment = &depth_atatchment
     };
 
     vkCmdBeginRendering(ctx.cmd_buf, &render_info);
-
     if (ctx.ssbo_buffer != VK_NULL_HANDLE) {
         vkCmdBindPipeline(ctx.cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx.graphics_pipeline);
         
@@ -629,12 +719,25 @@ void vk_draw_frame(void) {
         vkCmdBindDescriptorSets(ctx.cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 ctx.pipeline_layout, 0, 1, &ctx.desc_set, 0, NULL);
 
-        uint32_t push_constants[2] = { ctx.grid_w, ctx.grid_h };
-        vkCmdPushConstants(ctx.cmd_buf, ctx.pipeline_layout,
-                VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push_constants), push_constants);
+        PushConstants pc = {0};
+        memcpy(pc.mvp, mvp, sizeof(float)*16);
+        memcpy(pc.camp_pos, cam_pos, sizeof(float)*4);
+        pc.grid_info[0] = (int32_t)ctx.grid_w;
+        pc.grid_info[1] = (int32_t)ctx.grid_h;
+        pc.grid_info[2] = view_radius;
 
+        vkCmdPushConstants(
+            ctx.cmd_buf,
+            ctx.pipeline_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0,
+            sizeof(PushConstants),
+            &pc
+        );
+        uint32_t side = (uint32_t)(2*view_radius);
+        uint32_t vertex_count = side * side * 16;
         // Draw our 3-vertex procedural fullscreen triangle
-        vkCmdDraw(ctx.cmd_buf, 3, 1, 0, 0);
+        vkCmdDraw(ctx.cmd_buf, 3, vertex_count, 0, 0);
     }
 
     vkCmdEndRendering(ctx.cmd_buf);
@@ -713,20 +816,23 @@ void vk_cleanup(void) {
 
     for (uint32_t i=0; i<ctx.image_count; i++) {
         vkDestroyImageView(ctx.device, ctx.image_views[i], NULL);
-    vkDestroySemaphore(ctx.device, ctx.render_finished_sems[i], NULL);
+        vkDestroyImage(ctx.device, ctx.images[i], NULL);
+        vkDestroySemaphore(ctx.device, ctx.render_finished_sems[i], NULL);
     }
 
     free(ctx.images);
     free(ctx.image_views);
     free(ctx.render_finished_sems);
 
+    vkDestroyImageView(ctx.device, ctx.depth_view, NULL);
+    vkDestroyImage(ctx.device, ctx.depth_image, NULL);
+    vkFreeMemory(ctx.device, ctx.depth_memory, NULL);
+
     vkDestroySwapchainKHR(ctx.device, ctx.swapchain, NULL);
 
     vkDestroyDevice(ctx.device, NULL);
     vkDestroySurfaceKHR(ctx.instance, ctx.surface, NULL);
-    vkDestroyInstance(ctx.instance, NULL);
-
-    glfwDestroyWindow(ctx.window);
+    vkDestroyInstance(ctx.instance, NULL); glfwDestroyWindow(ctx.window);
     glfwTerminate();
 
     printf("Vulkan resources cleaned up.\n");

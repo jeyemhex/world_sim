@@ -10,26 +10,21 @@
 
 #version 460
 
-layout(location = 0) in vec2 frag_uv;
+layout(location = 0) in float frag_h;
+layout(location = 1) in vec3 frag_normal;
+layout(location = 2) in float frag_dist;
+
 layout(location = 0) out vec4 out_color;
 
-// Shared Fortran-GPU heightmap buffer (SSBO)
-layout(std430, set=0, binding=0) readonly buffer HeightmapBuffer {
-  float heights[];
-};
-
-// Fast 8-byte parameter block sent directly to the command buffer
 layout(push_constant) uniform PushConstants {
-  uint grid_w;
-  uint grid_h;
+  mat4 mvp;
+  vec4 cam_pos;
+  ivec4 grid_info;
 } pc;
 
 void main() {
-  uvec2 coord = min(uvec2(frag_uv * vec2(pc.grid_w, pc.grid_h)),
-                    uvec2(pc.grid_w-1, pc.grid_h-1));
+  float h = frag_h;
 
-  float h = heights[coord.y*pc.grid_w + coord.x];
-  
   // Basic hyposometric tinting based on height h in [0.0, 1.0]
   vec3 color;
   if (h < 0.5) {
@@ -46,5 +41,16 @@ void main() {
     color = mix(vec3(0.45, 0.40, 0.30), vec3(0.95, 0.95, 0.98), (h-0.85)/0.15);
   }
 
-  out_color = vec4(color, 1.0);
+  // Directional sunlight + ambienht sky light
+  vec3 sun_dir = normalize(vec3(0.6, 0.4, 0.7));
+  float diff = max(dot(normalize(frag_normal), sun_dir), 0.0);
+  float light = (h<0.35) ? 0.95 : (0.25 + 0.65*diff);
+  vec3 lit_color = color * light;
+
+  // Smooth atmospheric fog matching the clear colour (0.15, 0.35, 0.65)
+  float max_dist = float(pc.grid_info.z);
+  float fog = clamp((frag_dist - max_dist*0.65) / (max_dist*0.3), 0.0, 1.0);
+  vec3 sky_color = vec3(0.15, 0.35, 0.65);
+
+  out_color = vec4(mix(lit_color, sky_color, fog), 1.0);
 }
