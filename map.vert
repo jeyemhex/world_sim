@@ -10,12 +10,21 @@
 
 #version 460
 
-layout(location = 0) out float frag_h;
-layout(location = 1) out vec3 frag_normal;
-layout(location = 2) out float frag_dist;
+layout(location = 0) out float frag_terrain_h;
+layout(location = 1) out float frag_water;
+layout(location = 2) out float frag_sediment;
+layout(location = 3) out vec3 frag_normal;
+layout(location = 4) out float frag_dist;
 
-layout(std430, set=0, binding=0) readonly buffer HeightmapBuffer {
-  float heights[];
+struct Cell {
+  float bedrock;
+  float sediment;
+  float water;
+  float moisture;
+};
+
+layout(std430, set=0, binding=0) readonly buffer WorldBuffer {
+  Cell cells[];
 };
 
 layout(push_constant) uniform PushConstants{
@@ -24,13 +33,18 @@ layout(push_constant) uniform PushConstants{
   ivec4 grid_info;  // w = grid_w; y = grid_h; z = view_radius
 } pc;
 
-float sample_h(int x, int y) {
+Cell sample_cell(int x, int y) {
   int w = pc.grid_info.x;
   int h = pc.grid_info.y;
   int ix = ((x%w) + w) % w;
   int iy = ((y%h) + h) % h;
-  return heights[iy*w + ix];
+  return cells[iy*w + ix];
 }
+
+float surface_z(int x, int y) {
+  Cell c = sample_cell(x,y);
+  return (c.bedrock + c.sediment + c.water) * pc.cam_pos.w;
+};
 
 void main() {
   int R = pc.grid_info.z;
@@ -52,21 +66,21 @@ void main() {
 
   ivec2 v_cell = ivec2(qx, qy) + offsets[vert_in_quad];
 
-  float h_raw = sample_h(v_cell.x, v_cell.y);
-  frag_h = h_raw;
+  Cell c = sample_cell(v_cell.x, v_cell.y);
+  frag_terrain_h = c.bedrock + c.sediment;
+  frag_water = c.water;
+  frag_sediment = c.sediment;
 
-  // Flatten water surface at sea level (0.35) in 3D space while keepign frag_h for water depth colour
-  float h_geom = max(h_raw, 0.35);
-  float z_scale = pc.cam_pos.w;
+  float z_pos = surface_z(v_cell.x, v_cell.y);
 
   // Central differences for periodic surface normal
-  float hL = max(sample_h(v_cell.x-1, v_cell.y), 0.35) * z_scale;
-  float hR = max(sample_h(v_cell.x+1, v_cell.y), 0.35) * z_scale;
-  float hD = max(sample_h(v_cell.x, v_cell.y-1), 0.35) * z_scale;
-  float hU = max(sample_h(v_cell.x, v_cell.y+1), 0.35) * z_scale;
+  float hL = surface_z(v_cell.x-1, v_cell.y);
+  float hR = surface_z(v_cell.x+1, v_cell.y);
+  float hD = surface_z(v_cell.x, v_cell.y-1);
+  float hU = surface_z(v_cell.x, v_cell.y+1);
   frag_normal = normalize(vec3(hL-hR, hD-hU, 2.0));
 
-  vec3 world_pos = vec3(float(v_cell.x), float(v_cell.y), h_geom * z_scale); 
+  vec3 world_pos = vec3(float(v_cell.x), float(v_cell.y), z_pos);
   frag_dist = length(world_pos.xy - pc.cam_pos.xy);
 
   gl_Position = pc.mvp * vec4(world_pos, 1.0);

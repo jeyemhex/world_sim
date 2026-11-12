@@ -8,97 +8,70 @@ program world_sim
 !------------------------------------------------------------------------------#
 ! This code is distributed under the GLWTPL license.
 !==============================================================================#
-  use, intrinsic :: iso_c_binding
+  use, intrinsic :: iso_c_binding, only : cf => c_float, ci => c_int, cc => c_char, c_ptr, &
+                    c_associated, c_null_char, c_f_pointer
   use :: camera_mod
+  use :: world_mod
   implicit none
 
   interface
     function vk_init(width, height, title) bind(C, name="vk_init")
-      import :: c_int, c_char
-      integer(c_int)                              :: vk_init
-      integer(c_int),                  value      :: width, height
-      character(c_char), dimension(*), intent(in) :: title
+      import :: ci, cc
+      integer(ci)                              :: vk_init
+      integer(ci),                  value      :: width, height
+      character(cc), dimension(*), intent(in) :: title
     end function vk_init
 
     function vk_allocate_heightmap(grid_w, grid_h) bind(C, name="vk_allocate_heightmap")
-      import :: c_int, c_ptr
+      import :: ci, c_ptr
       type(c_ptr) :: vk_allocate_heightmap
-      integer(c_int), value :: grid_h, grid_w
+      integer(ci), value :: grid_h, grid_w
     end function vk_allocate_heightmap
 
     function vk_should_close() bind(C, name="vk_should_close")
-      import :: c_int
-      integer(c_int) :: vk_should_close
+      import :: ci
+      integer(ci) :: vk_should_close
     end function vk_should_close
 
     subroutine vk_draw_frame(mvp, cam_pos, view_radius) bind(C, name="vk_draw_frame")
-      import :: c_float, c_int
-      real(c_float), dimension(*), intent(in) :: mvp
-      real(c_float), dimension(*), intent(in) :: cam_pos
-      integer(c_int), value :: view_radius
+      import :: cf, ci
+      real(cf), dimension(*), intent(in) :: mvp
+      real(cf), dimension(*), intent(in) :: cam_pos
+      integer(ci), value :: view_radius
     end subroutine vk_draw_frame
 
     subroutine vk_cleanup() bind(C, name="vk_cleanup")
     end subroutine vk_cleanup
   end interface
 
-  integer(c_int), parameter :: GRID_W = 512, GRID_H = 512
-  integer(c_int) :: status, ix, iy
+  integer(ci), parameter :: GRID_W = 1024, GRID_H = 1024
+  integer(ci), parameter :: VIEW_RADIUS = 512_ci
+  real(cf),    parameter :: Z_SCALE     = 45.0_cf
+
+  integer(ci) :: status
   type(c_ptr) :: raw_gpu_ptr
-  real(c_float) :: max_val, min_val
-  real(c_float), pointer :: heightmap(:,:)
-
-  integer :: iter
-
-  ! Camera controls
-  integer(c_int), parameter :: VIEW_RADIUS = 256_c_int
-  real(c_float),  parameter :: Z_SCALE     = 10.0_c_float
+  type(cell_t), pointer :: world(:,:)
   type(camera_t) :: cam
-  real(c_float)  :: mvp(4,4), cam_pos_packed(4)
+  real(cf)  :: mvp(4,4), cam_pos_packed(4)
 
-  status = vk_init(1280, 720, "Fortran Vulkan World" // c_null_char)
+  status = vk_init(3440,1440, "Fortran Vulkan World" // c_null_char)
   if (status /= 0) error stop "Failed to initialized Vulkan backend"
 
   ! Request shared buffer from Vulkan and bind to a 2D Fortran array pointer
   raw_gpu_ptr = vk_allocate_heightmap(GRID_W, GRID_H)
   if (.not. c_associated(raw_gpu_ptr)) error stop "Failed to allocate GPU heightmap buffer"
-  call c_f_pointer(raw_gpu_ptr, heightmap, [GRID_W, GRID_H])
+  call c_f_pointer(raw_gpu_ptr, world, [GRID_W, GRID_H])
 
   ! Populate the heightmap directly in Fortran (values in [0.0, 1.0])
-  call random_number(heightmap)
-  print *, max_val, min_val
+  call world_generate(world, GRID_W, GRID_H)
 
-  do iter=1, 10
-    !$omp parallel do default(none) shared(heightmap) private(ix)
-    do iy=2, GRID_H-1
-      do ix=2+mod(iy,2), GRID_W-1, 2
-        heightmap(ix, iy) = (2*heightmap(ix,iy) + 0.5*(heightmap(ix-1,iy) + heightmap(ix,iy-1) + heightmap(ix+1,iy) + heightmap(ix,iy+1)))/4
-      end do
-    end do
-    !$omp parallel do default(none) shared(heightmap) private(ix)
-    do iy=2, GRID_H-1
-      do ix=2+mod(iy+1,2), GRID_W-1, 2
-        heightmap(ix, iy) = (2*heightmap(ix,iy) + 0.5*(heightmap(ix-1,iy) + heightmap(ix,iy-1) + heightmap(ix+1,iy) + heightmap(ix,iy+1)))/4
-      end do
-    end do
-
-    heightmap(:,1) = heightmap(:,GRID_H-1)
-    heightmap(:,GRID_H) = heightmap(:,2)
-    heightmap(1,:) = heightmap(GRID_W-1,:)
-    heightmap(GRID_W,:) = heightmap(2,:)
-    min_val = minval(heightmap)
-    max_val = maxval(heightmap)
-    heightmap = (heightmap - min_val) / (max_val - min_val)
-    print *, "Finished iter ", iter, ", range = ", maxval(heightmap), minval(heightmap)
-  end do
-
-  cam%pos = [real(GRID_W/2, c_float), real(GRID_H/2, c_float), 18.0_c_float]
+  cam%pos = [real(GRID_W/2, cf), real(GRID_H/2, cf), 18.0_cf]
 
   ! Main simulation loop
   do while (vk_should_close() == 0)
     !Update the camera
-    call camera_update(cam, 0.0166_c_float)
-    call camera_get_mvp(cam, 1280.0_c_float / 720.0_c_float, mvp)
+    call camera_update(cam, 0.0166_cf)
+    call camera_get_mvp(cam, 1280.0_cf / 720.0_cf, mvp)
 
     cam_pos_packed(1:3) = cam%pos
     cam_pos_packed(4)   = Z_SCALE

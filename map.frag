@@ -10,9 +10,11 @@
 
 #version 460
 
-layout(location = 0) in float frag_h;
-layout(location = 1) in vec3 frag_normal;
-layout(location = 2) in float frag_dist;
+layout(location = 0) in float frag_terrain_h;
+layout(location = 1) in float frag_water;
+layout(location = 2) in float frag_sediment;
+layout(location = 3) in vec3 frag_normal;
+layout(location = 4) in float frag_dist;
 
 layout(location = 0) out vec4 out_color;
 
@@ -23,28 +25,36 @@ layout(push_constant) uniform PushConstants {
 } pc;
 
 void main() {
-  float h = frag_h;
+  vec3 n = normalize(frag_normal);
+  float slope = 1.0 - n.z;
 
   // Basic hyposometric tinting based on height h in [0.0, 1.0]
   vec3 color;
-  if (h < 0.5) {
-    // Deep to shallow water
-    color = mix(vec3(0.05, 0.15, 0.40), vec3(0.15, 0.40, 0.70), h/0.5);
-  } else if (h < 0.55) {
-    // Sand/beach
-    color = mix(vec3(0.76, 0.70, 0.50), vec3(0.25, 0.55, 0.20), (h-0.5)/0.05);
-  } else if (h < 0.85) {
-    // iLowland forest to upland
-    color = mix(vec3(0.25, 0.55, 0.20), vec3(0.45, 0.40, 0.30), (h-0.55)/0.30);
+  if (frag_water > 0.001) {
+    // Water shaded by _actual_ depth
+    float depth_factor = clamp(frag_water / 0.25, 0.0, 1.0);
+    color = mix(vec3(0.18, 0.48, 0.72), vec3(0.04, 0.14, 0.38), depth_factor);
   } else {
-    // Bare rock to snow peaks
-    color = mix(vec3(0.45, 0.40, 0.30), vec3(0.95, 0.95, 0.98), (h-0.85)/0.15);
+    float h = frag_terrain_h;
+    if (h < 0.41) { // Coastal sand
+      color = mix(vec3(0.76, 0.70, 0.50), vec3(0.30, 0.55, 0.22), (h-0.38) / 0.03);
+
+    } else if (h < 0.75) { // Grass/forest on flat slopes, rock on steep cliffs
+      vec3 veg = mix(vec3(0.25, 0.52, 0.20), vec3(0.42, 0.48, 0.28), (h-0.41)/0.34);
+      vec3 rock = vec3(0.45, 0.42, 0.38);
+      color = mix(veg, rock, smoothstep(0.21, 0.35, slope));
+
+    } else { // Snow on flat/moderate slopes, dark rock on steep crags
+      vec3 snow = vec3(0.95, 0.96, 0.98);
+      vec3 rock = vec3(0.38, 0.36, 0.35);
+      color = mix(snow, rock, smoothstep(0.2, 0.45, slope));
+    }
   }
 
   // Directional sunlight + ambienht sky light
   vec3 sun_dir = normalize(vec3(0.6, 0.4, 0.7));
-  float diff = max(dot(normalize(frag_normal), sun_dir), 0.0);
-  float light = (h<0.35) ? 0.95 : (0.25 + 0.65*diff);
+  float diff = max(dot(n, sun_dir), 0.0);
+  float light = (frag_water > 0.001) ? (0.80 + 0.20*diff) : (0.28 + 0.72*diff);
   vec3 lit_color = color * light;
 
   // Smooth atmospheric fog matching the clear colour (0.15, 0.35, 0.65)

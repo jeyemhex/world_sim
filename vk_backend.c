@@ -513,7 +513,7 @@ static int create_descriptors_and_pipeline(void) {
 void* vk_allocate_heightmap(int grid_w, int grid_h) {
     ctx.grid_w = (uint32_t)grid_w;
     ctx.grid_h = (uint32_t)grid_h;
-    VkDeviceSize buffer_size = sizeof(float) * ctx.grid_w * ctx.grid_h;
+    VkDeviceSize buffer_size = sizeof(float)*4  * ctx.grid_w * ctx.grid_h;
 
     VkBufferCreateInfo buf_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -571,7 +571,9 @@ int vk_init(int width, int height, const char* title) {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-    ctx.window = glfwCreateWindow(width, height, title, NULL, NULL);
+    int count;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    ctx.window = glfwCreateWindow(width, height, title, monitors[count-1], NULL);
     if (!ctx.window) {
         fprintf(stderr, "Failed to create GLFW window\n");
         glfwTerminate();
