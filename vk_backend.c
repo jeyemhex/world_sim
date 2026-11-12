@@ -632,7 +632,7 @@ int vk_is_key_down(int key) {
     return glfwGetKey(ctx.window, key) == GLFW_PRESS ? 1 : 0;
 }
 
-void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius) {
+void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius, int view_mode) {
     // Wait for the previous frame to finish on the GPU
     vkWaitForFences(ctx.device, 1, &ctx.in_flight_fence, VK_TRUE, UINT64_MAX);
     vkResetFences(ctx.device, 1, &ctx.in_flight_fence);
@@ -727,6 +727,7 @@ void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius) {
         pc.grid_info[0] = (int32_t)ctx.grid_w;
         pc.grid_info[1] = (int32_t)ctx.grid_h;
         pc.grid_info[2] = view_radius;
+        pc.grid_info[3] = view_mode;
 
         vkCmdPushConstants(
             ctx.cmd_buf,
@@ -737,7 +738,7 @@ void vk_draw_frame(const float* mvp, const float* cam_pos, int view_radius) {
             &pc
         );
         uint32_t side = (uint32_t)(2*view_radius);
-        uint32_t vertex_count = side * side * 6;
+        uint32_t vertex_count = (view_mode == 1) ? 3 : side * side * 6;
         // Draw our 3-vertex procedural fullscreen triangle
         vkCmdDraw(ctx.cmd_buf, vertex_count, 1, 0, 0);
     }

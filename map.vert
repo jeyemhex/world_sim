@@ -30,7 +30,7 @@ layout(std430, set=0, binding=0) readonly buffer WorldBuffer {
 layout(push_constant) uniform PushConstants{
   mat4 mvp;
   vec4 cam_pos;     // w = vertical height scale; x,y,z = camera world position
-  ivec4 grid_info;  // w = grid_w; y = grid_h; z = view_radius
+  ivec4 grid_info;  // w = view_mode, x = grid_w; y = grid_h; z = view_radius
 } pc;
 
 Cell sample_cell(int x, int y) {
@@ -47,6 +47,19 @@ float surface_z(int x, int y) {
 };
 
 void main() {
+  // 2D top-down mode: 3-vertex fullscreen triangle
+  if (pc.grid_info.w == 1) {
+    vec2 uv = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+    frag_normal    = vec3(uv, 1.0);
+    frag_terrain_h = 0.0;
+    frag_water     = 0.0;
+    frag_sediment  = 0.0;
+    frag_dist      = 0.0;
+    gl_Position    = vec4(uv * 2.0f - 1.0f, 0.0f, 1.0f);
+    return;
+  }
+
+  // 3D perspective
   int R = pc.grid_info.z;
   int side = 2*R;
 

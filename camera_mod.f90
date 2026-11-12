@@ -17,6 +17,7 @@ module camera_mod
   integer(ci), parameter :: KEY_SPACE = 32
   integer(ci), parameter :: KEY_A     = 65
   integer(ci), parameter :: KEY_D     = 68
+  integer(ci), parameter :: KEY_M     = 77
   integer(ci), parameter :: KEY_S     = 83
   integer(ci), parameter :: KEY_W     = 87
   integer(ci), parameter :: KEY_RIGHT = 262
@@ -26,11 +27,13 @@ module camera_mod
   integer(ci), parameter :: KEY_SHIFT = 340
 
   type, public :: camera_t
-    real(cf) :: pos(3) = [0.0_cf, 0.0_cf, 25.0_cf]
-    real(cf) :: yaw    = 0.785_cf
-    real(cf) :: pitch  = -0.45_cf
-    real(cf) :: speed  = 10.0_cf
-    real(cf) :: turn_speed = 1.0_cf
+    real(cf)    :: pos(3)     = [0.0_cf, 0.0_cf, 25.0_cf]
+    real(cf)    :: yaw        = 0.785_cf
+    real(cf)    :: pitch      = -0.45_cf
+    real(cf)    :: speed      = 10.0_cf
+    real(cf)    :: turn_speed = 1.0_cf
+    integer(ci) :: view_mode  = 0_ci
+    logical     :: m_was_down = .false.
   end type camera_t
 
   interface
@@ -48,6 +51,13 @@ contains
     type(camera_t), intent(inout) :: cam
     real(cf),  intent(in)    :: dt
     real(cf) :: fwd(2), right(2)
+    logical  :: m_down
+
+    m_down = (vk_is_key_down(KEY_M) /= 0)
+    if (m_down .and. .not. cam%m_was_down) then
+      cam%view_mode = 1_ci - cam%view_mode
+    end if
+    cam%m_was_down = m_down
 
     ! Look rotation (arrow keys)
     if (vk_is_key_down(KEY_LEFT)  /= 0) cam%yaw = cam%yaw + cam%turn_speed*dt
@@ -100,7 +110,7 @@ contains
     fov_rad = 1.0472_cf
     tan_half_fov = tan(fov_rad * 0.5_cf)
     z_near = 0.5_cf
-    z_far  = 500.0_cf
+    z_far  = 800.0_cf
 
     proj = 0.0_cf
     proj(1,1) = 1.0_cf / (aspect * tan_half_fov)

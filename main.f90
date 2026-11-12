@@ -33,11 +33,12 @@ program world_sim
       integer(ci) :: vk_should_close
     end function vk_should_close
 
-    subroutine vk_draw_frame(mvp, cam_pos, view_radius) bind(C, name="vk_draw_frame")
+    subroutine vk_draw_frame(mvp, cam_pos, view_radius, view_mode) bind(C, name="vk_draw_frame")
       import :: cf, ci
       real(cf), dimension(*), intent(in) :: mvp
       real(cf), dimension(*), intent(in) :: cam_pos
       integer(ci), value :: view_radius
+      integer(ci), value :: view_mode
     end subroutine vk_draw_frame
 
     subroutine vk_cleanup() bind(C, name="vk_cleanup")
@@ -52,6 +53,7 @@ program world_sim
   type(c_ptr) :: raw_gpu_ptr
   type(cell_t), pointer :: world(:,:)
   type(camera_t) :: cam
+  integer(ci) :: cam_x, cam_y
   real(cf)  :: mvp(4,4), cam_pos_packed(4)
 
   status = vk_init(3440,1440, "Fortran Vulkan World" // c_null_char)
@@ -65,23 +67,24 @@ program world_sim
   ! Populate the heightmap directly in Fortran (values in [0.0, 1.0])
   call world_generate(world, GRID_W, GRID_H)
 
-  cam%pos = [real(GRID_W/2, cf), real(GRID_H/2, cf), 18.0_cf]
+  cam_x = GRID_W/2
+  cam_y = GRID_H/2
+  cam%pos = [        &
+    real(cam_x, cf), &
+    real(cam_y, cf), &
+    (world(cam_x, cam_y)%bedrock + world(cam_x,cam_y)%sediment + world(cam_x,cam_y)%water)*Z_SCALE + 10.0_cf]
 
   ! Main simulation loop
   do while (vk_should_close() == 0)
     !Update the camera
     call camera_update(cam, 0.0166_cf)
-    call camera_get_mvp(cam, 1280.0_cf / 720.0_cf, mvp)
+    call camera_get_mvp(cam, 3440.0_cf / 1440.0_cf, mvp)
 
     cam_pos_packed(1:3) = cam%pos
     cam_pos_packed(4)   = Z_SCALE
-    call vk_draw_frame(mvp, cam_pos_packed, VIEW_RADIUS)
+    call vk_draw_frame(mvp, cam_pos_packed, VIEW_RADIUS, cam%view_mode)
   end do
 
   call vk_cleanup()
 
-contains
-  real function rand()
-    call random_number(rand)
-  end function rand
 end program world_sim
