@@ -9,22 +9,10 @@ module camera_mod
 ! This code is distributed under the GLWTPL license.
 !==============================================================================#
   use, intrinsic :: iso_c_binding, only : cf => c_float, ci => c_int
+  use constants_mod
   implicit none
 
   private
-
-  ! GLFW key codes
-  integer(ci), parameter :: KEY_SPACE = 32
-  integer(ci), parameter :: KEY_A     = 65
-  integer(ci), parameter :: KEY_D     = 68
-  integer(ci), parameter :: KEY_M     = 77
-  integer(ci), parameter :: KEY_S     = 83
-  integer(ci), parameter :: KEY_W     = 87
-  integer(ci), parameter :: KEY_RIGHT = 262
-  integer(ci), parameter :: KEY_LEFT  = 263
-  integer(ci), parameter :: KEY_DOWN  = 264
-  integer(ci), parameter :: KEY_UP    = 265
-  integer(ci), parameter :: KEY_SHIFT = 340
 
   type, public :: camera_t
     real(cf)    :: pos(3)     = [0.0_cf, 0.0_cf, 25.0_cf]

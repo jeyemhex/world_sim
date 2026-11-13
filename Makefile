@@ -14,7 +14,7 @@ LDFLAGS := -lvulkan -lglfw -lm -fopenmp
 
 # Source Files
 # Note: List Fortran files in dependency order (modules first, main.f90 last)
-F_SRCS  := camera_mod.f90 world_mod.f90 main.f90
+F_SRCS  := constants_mod.f90 camera_mod.f90 world_mod.f90 main.f90
 C_SRCS  := vk_backend.c
 
 # Shader Files (Automatically finds any .vert, .frag, or .comp files)

@@ -26,79 +26,69 @@ module world_mod
 
 contains
 
+  function distance(a, b, bounds) result(d)
+    real :: d
+    integer a(2), b(2), bounds(2)
+
+    real :: dx, dy
+
+    dx = min( abs(a(1)-b(1)), &
+              abs(a(1)-b(1) + bounds(1)), &
+              abs(a(1)-b(1) - bounds(1)) )
+              
+    dy = min( abs(a(2)-b(2)), &
+              abs(a(2)-b(2) + bounds(2)), &
+              abs(a(2)-b(2) - bounds(2)) )
+              
+
+    d = dx**2 + dy**2
+
+  end function distance
   subroutine world_generate(grid, nx, ny)
     type(cell_t), intent(inout) :: grid(nx, ny)
     integer,      intent(in)    :: nx, ny
 
-    integer :: ix, iy, oct, period_x, period_y
-    real(cf) :: h, amp, freq_x, freq_y, total_amp, n_val
-    real(cf) :: min_h, max_h, total_h, h_range
-    real(cf), allocatable :: coarse(:,:)
+    real               :: noise(nx, ny)
+    integer            :: voronoi_mask(nx, ny)
+    integer, parameter :: n_plates = 8
+    integer            :: plate_centres(2,n_plates)
+    integer :: i, ix, iy
+    real :: min_dist
 
-    allocate(coarse(nx, ny))
+    grid(:,:)%bedrock  = 0.5_cf
+    grid(:,:)%sediment = 0.0_cf
+    grid(:,:)%water    = 0.0_cf
+    grid(:,:)%moisture = 0.0_cf
 
-    ! Initialize heights to zero
-    grid%bedrock  = 0.0_cf
-    grid%sediment = 0.0_cf
-    grid%water    = 0.0_cf
-    grid%moisture = 0.0_cf
-
-    amp = 1.0_cf
-    total_amp = 0.0_cf
-
-    ! Sum 7 octaves of periodic noise (periods 4 - 128)
-    do oct = 1, 6
-      period_x = 2**(oct + 1)
-      period_y = max(2, int(real(period_x)*real(ny)/real(nx)))
-
-      call random_number(coarse(1:period_x, 1:period_y))
-
-      do iy=1, ny
-        do ix = 1, nx
-          freq_x = real(ix-1, cf) * real(period_x, cf) / real(nx, cf)
-          freq_y = real(iy-1, cf) * real(period_y, cf) / real(ny, cf)
-
-          n_val = sample_periodic_bicubic(coarse, period_x, period_y, freq_x, freq_y)
-
-          ! Mix smooth hils with sharp mountain ridges
-          if (oct >= 3) then
-            n_val = 1.0_cf - abs(2.0_cf*n_val - 1.0_cf)
-            n_val = n_val * n_val
-          end if
-
-          grid(ix, iy)%bedrock = grid(ix,iy)%bedrock + amp*n_val
-        end do
-      end do
-
-      total_amp = total_amp + amp
-      amp = amp * 0.5_cf
+    call random_number(noise(1:3, 1:n_plates))
+    noise(1,1:n_plates) = noise(1,1:n_plates) * nx
+    noise(2,1:n_plates) = noise(2,1:n_plates) * ny
+    plate_centres = nint(noise(1:2, 1:n_plates))
+    
+    do i=1, n_plates
+      voronoi_mask(plate_centres(1,i), plate_centres(2,i)) = i
     end do
 
-    deallocate(coarse)
+    voronoi_mask = 0
 
-    ! Normalise bedrock to [0,1] and apply continental shelf curve 
-    min_h = minval(grid%bedrock)
-    max_h = maxval(grid%bedrock)
-    h_range = max_h-min_h
     do iy=1, ny
       do ix=1, nx
-        h = grid(ix,iy)%bedrock - min_h / h_range
+        voronoi_mask(ix,iy) = 1
+        min_dist = huge(1.0)
+        do i=1, n_plates
+          if (distance([ix,iy], plate_centres(:,i), [nx, ny]) < min_dist) then
+            voronoi_mask(ix,iy) = i
+            min_dist = distance([ix,iy], plate_centres(:,i), [nx, ny])
+          end if
+        end do
 
-        ! slightly flatten ocean basins and steepend mountain peaks
-        h = h ** 1.25_cf
-
-        ! Deposit a thin layer of loose sediment in the valleys/lowlands
-        grid(ix,iy)%sediment = 0.05_cf * (1.0_cf - h)
-        grid(ix,iy)%bedrock = h - grid(ix,iy)%sediment
-
-        total_h = grid(ix,iy)%bedrock + grid(ix,iy)%sediment
-        if (total_h < SEA_LEVEL) then
-          grid(ix,iy)%water = SEA_LEVEL - total_h
-        else
-          grid(ix,iy)%water = 0.0_cf
-        end if
+        grid(ix,iy)%bedrock = noise(3,voronoi_mask(ix,iy))
       end do
     end do
+
+    where(grid%bedrock < SEA_LEVEL) grid%water = SEA_LEVEL - grid%bedrock
+
+
 
   end subroutine world_generate
 

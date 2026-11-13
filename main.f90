@@ -10,6 +10,8 @@ program world_sim
 !==============================================================================#
   use, intrinsic :: iso_c_binding, only : cf => c_float, ci => c_int, cc => c_char, c_ptr, &
                     c_associated, c_null_char, c_f_pointer
+
+  use :: constants_mod
   use :: camera_mod
   use :: world_mod
   implicit none
@@ -43,10 +45,16 @@ program world_sim
 
     subroutine vk_cleanup() bind(C, name="vk_cleanup")
     end subroutine vk_cleanup
+
+    function vk_is_key_down(key) bind(C, name="vk_is_key_down")
+      import :: ci
+      integer(ci) :: vk_is_key_down
+      integer(ci), value :: key
+    end function vk_is_key_down
   end interface
 
-  integer(ci), parameter :: GRID_W = 1024, GRID_H = 1024
-  integer(ci), parameter :: VIEW_RADIUS = 512_ci
+  integer(ci), parameter :: GRID_W = 512, GRID_H = 512
+  integer(ci), parameter :: VIEW_RADIUS = 256_ci
   real(cf),    parameter :: Z_SCALE     = 45.0_cf
 
   integer(ci) :: status
@@ -83,6 +91,7 @@ program world_sim
     cam_pos_packed(1:3) = cam%pos
     cam_pos_packed(4)   = Z_SCALE
     call vk_draw_frame(mvp, cam_pos_packed, VIEW_RADIUS, cam%view_mode)
+    if (vk_is_key_down(KEY_Q) /= 0) exit
   end do
 
   call vk_cleanup()
