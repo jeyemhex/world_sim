@@ -20,6 +20,7 @@ module camera_mod
     real(cf)    :: pitch      = -0.45_cf
     real(cf)    :: speed      = 10.0_cf
     real(cf)    :: turn_speed = 1.0_cf
+    real(cf)    :: fov        = 60
     integer(ci) :: view_mode  = 0_ci
     logical     :: m_was_down = .false.
   end type camera_t
@@ -33,19 +34,36 @@ module camera_mod
   end interface
 
   public :: camera_update, camera_get_mvp
+  real(cf), parameter :: cam_z_offset = 2.0_cf
+
+  logical, save :: is_key_down(KEY_LAST) = .false.
 
 contains
-  subroutine camera_update(cam, dt)
+
+  function key_pressed(k, start, finish)
+    logical     :: key_pressed
+    integer(ci), intent(in) :: k
+    logical,     intent(in), optional :: start, finish
+    logical :: local_start, local_finish, is_key_pressed
+
+    local_start = .false.; if (present(start)) local_start = start
+    local_finish = .false.; if (present(finish)) local_finish = finish
+
+    key_pressed = vk_is_key_down(k) /= 0
+    is_key_pressed = vk_is_key_down(k) /= 0
+
+    if ( (local_start .or. local_finish) .and. is_key_down(k) .eqv. key_pressed) key_pressed = .false.
+    is_key_down(k) = is_key_pressed
+
+  end function
+  subroutine camera_update(cam, height, dt)
     type(camera_t), intent(inout) :: cam
+    real(cf),  intent(in)    :: height
     real(cf),  intent(in)    :: dt
     real(cf) :: fwd(2), right(2)
     logical  :: m_down
 
-    m_down = (vk_is_key_down(KEY_M) /= 0)
-    if (m_down .and. .not. cam%m_was_down) then
-      cam%view_mode = 1_ci - cam%view_mode
-    end if
-    cam%m_was_down = m_down
+    if (key_pressed(KEY_M, start=.true.)) cam%view_mode = 1_ci - cam%view_mode
 
     ! Look rotation (arrow keys)
     if (vk_is_key_down(KEY_LEFT)  /= 0) cam%yaw = cam%yaw + cam%turn_speed*dt
@@ -61,8 +79,25 @@ contains
     if (vk_is_key_down(KEY_S)  /= 0) cam%pos(1:2) = cam%pos(1:2) - fwd*dt
     if (vk_is_key_down(KEY_D)  /= 0) cam%pos(1:2) = cam%pos(1:2) + right*dt
     if (vk_is_key_down(KEY_A)  /= 0) cam%pos(1:2) = cam%pos(1:2) - right*dt
+
     if (vk_is_key_down(KEY_SPACE) /= 0) cam%pos(3) = cam%pos(3) + cam%speed*dt
-    if (vk_is_key_down(KEY_SHIFT) /= 0) cam%pos(3) = cam%pos(3) - cam%speed*dt
+    if (vk_is_key_down(KEY_LEFT_SHIFT) /= 0 .and. height+cam_z_offset <= cam%pos(3)) then
+      print *, "height: ", height, ", cam: ", cam%pos(3)
+      cam%pos(3) = cam%pos(3) - cam%speed*dt
+    end if
+    cam%pos(3) = max(cam%pos(3), height+cam_z_offset)
+
+
+    m_down = (vk_is_key_down(KEY_M) /= 0)
+    if (m_down .and. .not. cam%m_was_down) then
+      cam%view_mode = 1_ci - cam%view_mode
+    end if
+    cam%m_was_down = m_down
+
+    if (key_pressed(KEY_EQUAL, start=.true.)) cam%fov = cam%fov + 5.0_cf
+    if (key_pressed(KEY_MINUS, start=.true.)) cam%fov = cam%fov - 5.0_cf
+    if (key_pressed(KEY_0, start=.true.)) cam%fov = 60.0_cf
+
   end subroutine camera_update
 
   subroutine camera_get_mvp(cam, aspect, mvp)
@@ -72,7 +107,7 @@ contains
 
     real(cf) :: view(4,4), proj(4,4)
     real(cf) :: f(3), s(3), u(3), world_up(3)
-    real(cf) :: fov_rad, tan_half_fov, z_near, z_far
+    real(cf) :: tan_half_fov, z_near, z_far
 
     ! Forward vector from spehrical pitch/yaw (Z is up)
     f = [ cos(cam%pitch)*cos(cam%yaw), &
@@ -95,8 +130,8 @@ contains
     view(4, 4)   =  1.0_cf
 
     ! Vulkan perspective matrix (0-1 depth, y-flipped)
-    fov_rad = 1.0472_cf
-    tan_half_fov = tan(fov_rad * 0.5_cf)
+    print *, cam%fov
+    tan_half_fov = tan(cam%fov * PI/360)
     z_near = 0.5_cf
     z_far  = 800.0_cf
 

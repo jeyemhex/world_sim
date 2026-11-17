@@ -81,11 +81,14 @@ program world_sim
     real(cam_x, cf), &
     real(cam_y, cf), &
     (world(cam_x, cam_y)%bedrock + world(cam_x,cam_y)%sediment + world(cam_x,cam_y)%water)*Z_SCALE + 10.0_cf]
+  cam%fov = 60.0_cf
 
   ! Main simulation loop
   do while (vk_should_close() == 0)
     !Update the camera
-    call camera_update(cam, 0.0166_cf)
+    cam_x = modulo(int(cam%pos(1)-1), GRID_W) + 1
+    cam_y = modulo(int(cam%pos(2)-1), GRID_H) + 1
+    call camera_update(cam, world(cam_x, cam_y)%bedrock*Z_SCALE, 0.0166_cf)
     call camera_get_mvp(cam, 3440.0_cf / 1440.0_cf, mvp)
 
     cam_pos_packed(1:3) = cam%pos
